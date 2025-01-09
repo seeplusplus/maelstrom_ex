@@ -185,7 +185,8 @@ defmodule Maelstrom do
         } = reply_body} = msg, {%{rpcs: rpcs} = node_state, inner_state} = state) do
 
         {original_body, callback} = Map.get(rpcs, msg_id, {nil, &warn_missing_rpc_callback/3})
-        process_callback(callback.(original_body, reply_body, inner_state), msg, state)
+
+        try_process_callback(fn -> callback.(original_body, reply_body, inner_state) end, msg, state)
       end
 
       @impl true
@@ -194,7 +195,8 @@ defmodule Maelstrom do
         "dest" => dest,
         "body" => %{"msg_id" => msg_id} = body
       } = msg, {node_state, inner_state} = state) do
-        process_callback(handle_message(src, dest, body, inner_state, node_state), msg, state)
+
+        try_process_callback(fn -> handle_message(src, dest, body, inner_state, node_state) end, msg, state)
       end
 
       def handle_cast({:send_rpc, dest, body, callback}, {%{rpcs: rpcs, msg_id: msg_id} = node_state, inner_state}) do
@@ -231,6 +233,16 @@ defmodule Maelstrom do
 
       def handle_cast(other, _state) do
         raise "Unexpected message format: #{inspect(other)}"
+      end
+
+      defp try_process_callback(callback, msg, {_, inner_state} = state) do
+        (try do
+          callback.()
+        rescue e ->
+          {:error, 13, "#{inspect(e)}", inner_state}
+        end)
+        |>
+        process_callback(msg, state)
       end
 
       defp process_callback(result, %{
